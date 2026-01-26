@@ -128,8 +128,9 @@ func (c *CEL) createEvalContext(event *events.EnrichedEvent) map[string]any {
 	eventType := event.Event.GetEventType()
 
 	// Wrap event in xcel for CEL field access
-	// xcel will use reflection to discover fields on the actual concrete type
-	obj, _ := xcel.NewObject(event.Event)
+	// Cast to CelEvent interface so xcel creates Object[CelEvent] matching the field getters
+	celEvent := event.Event.(utils.CelEvent)
+	obj, _ := xcel.NewObject(celEvent)
 
 	evalContext := map[string]any{
 		"eventType": string(eventType),
