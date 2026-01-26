@@ -172,7 +172,11 @@ func (c *CEL) EvaluateRule(event *events.EnrichedEvent, expressions []typesv1.Ru
 			return false, err
 		}
 
-		if !out.Value().(bool) {
+		boolVal, ok := out.Value().(bool)
+		if !ok {
+			return false, fmt.Errorf("rule expression returned %T, expected bool", out.Value())
+		}
+		if !boolVal {
 			return false, nil
 		}
 	}
