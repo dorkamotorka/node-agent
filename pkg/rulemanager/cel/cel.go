@@ -2,6 +2,7 @@ package cel
 
 import (
 	"fmt"
+	"reflect"
 	"sync"
 
 	"github.com/google/cel-go/cel"
@@ -127,9 +128,8 @@ func (c *CEL) createEvalContext(event *events.EnrichedEvent) map[string]any {
 	eventType := event.Event.GetEventType()
 
 	// Wrap event in xcel for CEL field access
-	// Cast to CelEvent interface so xcel creates Object[CelEvent] matching the field getters
-	celEvent := event.Event.(utils.CelEvent)
-	obj, _ := xcel.NewObject(celEvent)
+	// xcel will use reflection to discover fields on the actual concrete type
+	obj, _ := xcel.NewObject(event.Event)
 
 	evalContext := map[string]any{
 		"eventType": string(eventType),
@@ -214,11 +214,17 @@ func (c *CEL) RegisterCustomType(eventType utils.EventType, obj interface{}) err
 	c.typeMutex.Lock()
 	defer c.typeMutex.Unlock()
 
+	// First, register any nested pointer types to ensure CEL can resolve them
+	c.registerNestedTypes(obj)
+
 	// Create new object and type using xcel
 	xcelObj, xcelTyp := xcel.NewObject(obj)
 
+	// Auto-discover fields from the object using xcel
+	fields := xcel.NewFields(xcelObj)
+
 	// Register the new object with the existing type adapter/provider
-	xcel.RegisterObject(c.ta, c.tp, xcelObj, xcelTyp, xcel.NewFields(xcelObj))
+	xcel.RegisterObject(c.ta, c.tp, xcelObj, xcelTyp, fields)
 
 	// Extend the environment with the new variable
 	// This preserves all existing types while adding the new one
@@ -237,4 +243,35 @@ func (c *CEL) RegisterCustomType(eventType utils.EventType, obj interface{}) err
 	c.cacheMutex.Unlock()
 
 	return nil
+}
+
+// registerNestedTypes registers nested pointer types found in the given object
+// This ensures that CEL can properly resolve nested types in expressions
+func (c *CEL) registerNestedTypes(obj interface{}) {
+	objType := reflect.TypeOf(obj)
+	if objType.Kind() == reflect.Ptr {
+		objType = objType.Elem()
+	}
+
+	// Iterate through all fields of the struct
+	for i := 0; i < objType.NumField(); i++ {
+		field := objType.Field(i)
+		fieldType := field.Type
+
+		// Check if field is a pointer to a custom type
+		if fieldType.Kind() == reflect.Ptr {
+			elemType := fieldType.Elem()
+
+			// Skip built-in types (net.Header, etc.) - only register custom structs
+			if elemType.Kind() == reflect.Struct && elemType.PkgPath() != "" {
+				// Create a zero instance of the nested type
+				nestedInstance := reflect.New(elemType).Interface()
+
+				// Register the nested type
+				xcelObj, xcelTyp := xcel.NewObject(nestedInstance)
+				fields := xcel.NewFields(xcelObj)
+				xcel.RegisterObject(c.ta, c.tp, xcelObj, xcelTyp, fields)
+			}
+		}
+	}
 }
