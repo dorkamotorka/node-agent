@@ -7,10 +7,8 @@ import (
 	"github.com/kubescape/node-agent/pkg/utils"
 )
 
-type CELRuleEvaluator interface {
+type RuleEvaluator interface {
 	EvaluateRule(event *events.EnrichedEvent, expressions []typesv1.RuleExpression) (bool, error)
-	EvaluateExpressionByMap(event map[string]any, expression string, eventType utils.EventType) (string, error)
-	EvaluateRuleByMap(event map[string]any, eventType utils.EventType, expressions []typesv1.RuleExpression) (bool, error)
 	EvaluateExpression(event *events.EnrichedEvent, expression string) (string, error)
 	RegisterHelper(function cel.EnvOption) error
 	RegisterCustomType(eventType utils.EventType, obj interface{}) error
