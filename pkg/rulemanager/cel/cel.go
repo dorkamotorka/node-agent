@@ -43,10 +43,10 @@ func NewCEL(objectCache objectcache.ObjectCache, cfg config.Config) (*CEL, error
 	xcel.RegisterObject(ta, tp, eventObj, eventTyp, utils.CelFields)
 
 	// Register "event" variable for all event types
-	// Also register "http" variable for HTTP events
+	// Do NOT register "http" here - it will be registered by RegisterCustomType
+	// to avoid identifier conflicts when HTTP event type is registered
 	envOptions := []cel.EnvOption{
 		cel.Variable("event", eventTyp), // All events accessible via "event" variable
-		cel.Variable("http", eventTyp),  // HTTP events also accessible via "http" variable
 		cel.Variable("eventType", cel.StringType),
 		cel.CustomTypeAdapter(ta),
 		cel.CustomTypeProvider(tp),
@@ -127,7 +127,9 @@ func (c *CEL) createEvalContext(event *events.EnrichedEvent) map[string]any {
 	eventType := event.Event.GetEventType()
 
 	// Wrap event in xcel for CEL field access
-	obj, _ := xcel.NewObject(event.Event)
+	// Cast to CelEvent interface so xcel creates Object[CelEvent] matching the field getters
+	celEvent := event.Event.(utils.CelEvent)
+	obj, _ := xcel.NewObject(celEvent)
 
 	evalContext := map[string]any{
 		"eventType": string(eventType),
