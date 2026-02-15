@@ -1,30 +1,43 @@
-name: trace_open
-description: Trace file opens with reliable absolute path resolution via bpf_d_path
-homepageURL: https://github.com/k8sstormcenter
-sourceURL: https://github.com/k8sstormcenter/node-agent/tree/fix/openrelative/pkg/ebpf/gadgets/trace_open
+name: trace open
+description: trace open files
+homepageURL: https://inspektor-gadget.io/
+documentationURL: https://www.inspektor-gadget.io/docs/latest/gadgets/trace_open
+sourceURL: https://github.com/inspektor-gadget/inspektor-gadget/tree/main/gadgets/trace_open
 datasources:
   open:
     fields:
       flags_raw:
         annotations:
           columns.hidden: true
+      flags:
+        annotations:
+          columns.hidden: true
+          columns.width: 10
       mode_raw:
         annotations:
           columns.hidden: true
+      mode:
+        annotations:
+          description: File access mode
       error_raw:
         annotations:
           columns.hidden: true
       fd:
         annotations:
           description: File descriptor. 0 in case of error
+          columns.minwidth: 2
+          columns.maxwidth: 3
+          columns.alignment: right
       fname:
         annotations:
           description: File name as given in the open syscall
           columns.width: 32
+          columns.minwidth: 24
       fpath:
         annotations:
-          description: Full absolute file path (resolved via bpf_d_path with dentry-walk fallback)
-          columns.width: 64
+          description: Full file path after symlink resolution (require --paths flag)
+          columns.width: 32
+          columns.minwidth: 24
 params:
   ebpf:
     targ_failed:
@@ -34,4 +47,4 @@ params:
     paths:
       key: paths
       defaultValue: "false"
-      description: Enable full path resolution (bpf_d_path + dentry-walk fallback)
+      description: Show file path after symlink resolution

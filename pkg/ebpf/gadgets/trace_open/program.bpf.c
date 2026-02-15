@@ -5,18 +5,17 @@
 #include <vmlinux.h>
 #include <bpf/bpf_helpers.h>
 #include <bpf/bpf_core_read.h>
-#include <bpf/bpf_tracing.h>
 
 #include <gadget/buffer.h>
 #include <gadget/common.h>
 #include <gadget/filter.h>
 #include <gadget/macros.h>
 #include <gadget/types.h>
+#include <gadget/user_stack_map.h>
 #include <gadget/filesystem.h>
 
-#include "program.h"
-
 #define TASK_RUNNING 0
+#define NAME_MAX 255
 
 struct args_t {
 	const char *fname;
@@ -24,9 +23,17 @@ struct args_t {
 	__u16 mode;
 };
 
-struct path_entry {
-	char path[GADGET_PATH_MAX];
-	long len;
+struct event {
+	gadget_timestamp timestamp_raw;
+	struct gadget_process proc;
+
+	gadget_errno error_raw;
+	__u32 fd;
+	gadget_file_flags flags_raw;
+	gadget_file_mode mode_raw;
+	struct gadget_user_stack ustack;
+	char fname[NAME_MAX];
+	char fpath[GADGET_PATH_MAX];
 };
 
 const volatile bool targ_failed = false;
@@ -42,21 +49,6 @@ struct {
 	__type(value, struct args_t);
 } start SEC(".maps");
 
-struct {
-	__uint(type, BPF_MAP_TYPE_HASH);
-	__uint(max_entries, 10240);
-	__type(key, u64);
-	__type(value, struct path_entry);
-} path_map SEC(".maps");
-
-// Per-CPU scratch space for bpf_d_path — avoids blowing the 512-byte BPF stack
-struct {
-	__uint(type, BPF_MAP_TYPE_PERCPU_ARRAY);
-	__uint(max_entries, 1);
-	__type(key, u32);
-	__type(value, struct path_entry);
-} path_scratch SEC(".maps");
-
 GADGET_TRACER_MAP(events, 1024 * 256);
 
 GADGET_TRACER(open, events, event);
@@ -64,8 +56,7 @@ GADGET_TRACER(open, events, event);
 static __always_inline int trace_enter(const char *filename, int flags,
 				       __u16 mode)
 {
-	__u64 pid_tgid = bpf_get_current_pid_tgid();
-	u32 pid = (u32)pid_tgid;
+	__u64 pid = bpf_get_current_pid_tgid();
 
 	if (gadget_should_discard_data_current())
 		return 0;
@@ -74,7 +65,7 @@ static __always_inline int trace_enter(const char *filename, int flags,
 	args.fname = filename;
 	args.flags = flags;
 	args.mode = mode;
-	bpf_map_update_elem(&start, &pid, &args, BPF_ANY);
+	bpf_map_update_elem(&start, &pid, &args, 0);
 
 	return 0;
 }
@@ -95,46 +86,21 @@ int ig_openat_e(struct syscall_trace_enter *ctx)
 			   (__u16)ctx->args[3]);
 }
 
-
-SEC("fentry/security_file_open")
-int BPF_PROG(ig_open_security, struct file *file)
-{
-	u64 pid_tgid = bpf_get_current_pid_tgid();
-	u32 pid = (u32)pid_tgid;
-
-	struct args_t *ap = bpf_map_lookup_elem(&start, &pid);
-	if (!ap)
-		return 0;
-
-	u32 zero = 0;
-	struct path_entry *val = bpf_map_lookup_elem(&path_scratch, &zero);
-	if (!val)
-		return 0;
-
-	long ret = bpf_d_path(&file->f_path, val->path, sizeof(val->path));
-	if (ret >= 0) {
-		val->len = ret;
-		bpf_map_update_elem(&path_map, &pid_tgid, val, BPF_ANY);
-	}
-
-	return 0;
-}
-
 static __always_inline int trace_exit(struct syscall_trace_exit *ctx)
 {
 	struct event *event;
 	struct args_t *ap;
-	struct path_entry *pe;
 	long int ret;
 	__u32 fd;
 	__s32 errval;
 	__u64 pid_tgid = bpf_get_current_pid_tgid();
+
+	// pid from kernel po
 	u32 pid = (u32)pid_tgid;
 
 	ap = bpf_map_lookup_elem(&start, &pid);
 	if (!ap)
 		return 0; /* missed entry */
-
 	ret = ctx->ret;
 	if (targ_failed && ret >= 0)
 		goto cleanup; /* want failed only */
@@ -148,13 +114,7 @@ static __always_inline int trace_exit(struct syscall_trace_exit *ctx)
 	if (ret >= 0) {
 		fd = ret;
 
-		// Try bpf_d_path result first (from fentry/security_file_open)
-		pe = bpf_map_lookup_elem(&path_map, &pid_tgid);
-		if (pe) {
-			__builtin_memcpy(event->fpath, pe->path,
-					 sizeof(event->fpath));
-		} else if (paths) {
-			// Fallback: dentry walk (works on all kernels)
+		if (paths) {
 			long r = read_full_path_of_open_file_fd(
 				fd, (char *)event->fpath, sizeof(event->fpath));
 			if (r <= 0)
@@ -166,6 +126,7 @@ static __always_inline int trace_exit(struct syscall_trace_exit *ctx)
 
 	/* event data */
 	gadget_process_populate(&event->proc);
+	gadget_get_user_stack(ctx, &event->ustack);
 
 	bpf_probe_read_user_str(&event->fname, sizeof(event->fname), ap->fname);
 	event->flags_raw = ap->flags;
@@ -179,7 +140,6 @@ static __always_inline int trace_exit(struct syscall_trace_exit *ctx)
 
 cleanup:
 	bpf_map_delete_elem(&start, &pid);
-	bpf_map_delete_elem(&path_map, &pid_tgid);
 	return 0;
 }
 
