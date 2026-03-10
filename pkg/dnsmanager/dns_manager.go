@@ -59,6 +59,7 @@ func (dm *DNSManager) ContainerCallback(notif containercollection.PubSubEvent) {
 	}
 }
 
+// This is the main function that processes DNS events
 func (dm *DNSManager) ReportEvent(dnsEvent utils.DNSEvent) {
 	dnsName := dnsEvent.GetDNSName()
 	if isCloudService(dnsName) {

@@ -146,6 +146,7 @@ func (tf *TracerFactory) CreateAllTracers(manager containerwatcher.TracerRegistr
 		tf.kubeManager,
 		tf.runtime,
 		tf.ociStore,
+		// RETURNS A FUNCTION THAT ADDS EVENTS DIRECTLY TO THE EVENT QUEUE
 		tf.createEventCallback(utils.OpenEventType),
 		tf.thirdPartyEnricher,
 	)

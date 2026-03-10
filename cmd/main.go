@@ -189,6 +189,8 @@ func main() {
 	dWatcher.AddAdaptor(k8sObjectCache)
 
 	// Create the host sensor manager
+	// Host sensor manager is responsible for collecting data from the host like kubelet info, node info, kernel version etc.
+	// This data is used for enriching the events and for node profiling.
 	var hostSensorManager hostsensormanager.HostSensorManager
 	if cfg.EnableHostSensor {
 		hostSensorConfig := hostsensormanager.Config{
@@ -205,6 +207,9 @@ func main() {
 	}
 
 	// Create the seccomp manager
+	// Seccomp manager is responsible for managing seccomp profiles on the node. 
+	// It provides an interface for adding, deleting and getting seccomp profiles.
+	// Seccomp manager is used by the seccomp profile watcher to apply seccomp profiles for the container/s that is specified in the SeccompProfile CRD.
 	var seccompManager seccompmanager.SeccompManagerClient
 	var seccompWatcher seccompprofilewatcher.SeccompProfileWatcher
 	if cfg.EnableSeccomp {
@@ -220,17 +225,38 @@ func main() {
 		seccompManager = seccompmanager.NewSeccompManagerMock()
 	}
 
+	// Declare a cache that will manage which runtime rules apply to which pods
 	var ruleBindingCache *rulebindingcachev1.RBCache
+
+	// Only initialize runtime detection components if the feature is enabled
 	if cfg.EnableRuntimeDetection {
+
+		// Create an in-memory rule registry (stores all available rule definitions)
 		ruleCreator := rulecreator.NewRuleCreator()
+
+		// Create the rule binding cache:
+		// - Watches pods and RuntimeAlertRuleBindings
+		// - Resolves which rules apply to which pods (node-scoped)
 		ruleBindingCache = rulebindingcachev1.NewCache(cfg, k8sClient, ruleCreator)
-		rulesWatcher := ruleswatcher.NewRulesWatcher(k8sClient, ruleCreator, func() {
-			ruleBindingCache.RefreshRuleBindingsRules()
-		})
+
+		// Create a watcher for rule definitions (e.g., from CRDs or backend sync)
+		// When rules change, refresh the rules attached to existing rule bindings
+		rulesWatcher := ruleswatcher.NewRulesWatcher(
+			k8sClient,
+			ruleCreator,
+			func() {
+				// Recompute rules for all existing rule bindings after updates
+				ruleBindingCache.RefreshRuleBindingsRules()
+			},
+		)
+
+		// Register the rules watcher so it starts receiving Kubernetes watch events
 		dWatcher.AddAdaptor(rulesWatcher)
 	}
 
 	// Create and DNS managers
+	// If network tracing or runtime detection is enabled, use the real DNS manager that tracks DNS events and resolutions.
+	// Used for enriching runtime detection events with domain names instead of IP addresses.
 	var dnsManagerClient dnsmanager.DNSManagerClient
 	var dnsResolver dnsmanager.DNSResolver
 	if cfg.EnableNetworkTracing || cfg.EnableRuntimeDetection {
@@ -246,6 +272,7 @@ func main() {
 		dnsResolver = dnsmanager.CreateDNSManagerMock()
 	}
 
+	// Container Profile Manager that monitors container behavior (like syscalls and network activity) to build a security "allow-list"
 	var containerProfileManager containerprofilemanager.ContainerProfileManagerClient
 	if cfg.EnableApplicationProfile {
 		containerProfileManager, err = containerprofilemanagerv1.NewContainerProfileManager(ctx, cfg, k8sClient, k8sObjectCache, storageClient, dnsResolver, seccompManager, nil, ruleBindingCache)

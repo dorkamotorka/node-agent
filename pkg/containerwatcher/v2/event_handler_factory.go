@@ -172,6 +172,7 @@ func NewEventHandlerFactory(
 }
 
 // ProcessEvent processes an event through all registered handlers
+// GETS CALLED BY THE WORKER POOL WHEN Invoke() for every enriched event received through the golang channel (pulled from the Events Queue)
 func (ehf *EventHandlerFactory) ProcessEvent(enrichedEvent *events.EnrichedEvent) {
 	if enrichedEvent.ContainerID == "" {
 		return

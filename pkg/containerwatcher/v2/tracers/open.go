@@ -139,7 +139,7 @@ func (ot *OpenTracer) handleEvent(event utils.OpenEvent, syscalls []uint64) {
 	if ot.eventCallback != nil {
 		containerID := event.GetContainerID()
 		processID := event.GetPID()
-
+		// INTERNALLY CALLS ot.eventCallback that adds the event to the Events Queue declared in the tracer_factory.go
 		enrichEvent(ot.thirdPartyEnricher, event, syscalls, ot.eventCallback, containerID, processID)
 	}
 }

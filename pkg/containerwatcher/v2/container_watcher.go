@@ -156,6 +156,7 @@ func CreateContainerWatcher(
 	eventEnricher := NewEventEnricher(processTreeManager)
 
 	// Create worker pool for processing individual events
+	// THIS FUNCTION IS PROVIDED TO THE WORKERPOOL AND INVOKED (Invoke() function below!) FOR EVERY ENRICHED EVENT RECEIVED
 	workerPool, err := ants.NewPoolWithFunc(cfg.WorkerPoolSize, func(i interface{}) {
 		enrichedEvent := i.(*events.EnrichedEvent)
 		eventHandlerFactory.ProcessEvent(enrichedEvent)
@@ -304,6 +305,7 @@ func (cw *ContainerWatcher) Start(ctx context.Context) error {
 	// Start ordered event queue BEFORE tracers
 
 	// Start event processing loop
+	// STARTS PULLING EVENTS FROM EVENTS QUEUE WHENEVER THEY ARRIVE 
 	go cw.eventProcessingLoop()
 
 	// Start worker pool goroutine
@@ -319,7 +321,7 @@ func (cw *ContainerWatcher) Start(ctx context.Context) error {
 		cw.containerCollection,
 		cw.tracerCollection,
 		cw.containerSelector,
-		cw.orderedEventQueue,
+		cw.orderedEventQueue, // SINGLE EVENTS QUEUE WHERE EVENTS ARE PUSHED
 		cw.socketEnricher,
 		cw.containerProfileManager,
 		cw.ruleManager,
@@ -331,7 +333,9 @@ func (cw *ContainerWatcher) Start(ctx context.Context) error {
 	)
 
 	// Initialize tracer manager
+	// Tracers are registered in CreateAllTracers function in the tracer_factory.go
 	tracerManagerV2 := NewTracerManager(cw.cfg, tracerFactory)
+	// CALLS CreateAllTracers AND CALLS Start() ON EACH OF THE TRACERS/GADGETS!
 	if err := tracerManagerV2.StartAllTracers(ctx); err != nil {
 		return fmt.Errorf("starting tracer manager: %w", err)
 	}
@@ -440,12 +444,13 @@ func (cw *ContainerWatcher) workerPoolLoop() {
 		select {
 		case <-cw.ctx.Done():
 			return
-		case enrichedEvent := <-cw.workerChan:
+		case enrichedEvent := <-cw.workerChan: // Read enrichedEvents from the golang channel
 			cw.workerPool.Invoke(enrichedEvent)
 		}
 	}
 }
 
+// READS EVENTS FROM THE EVENTS QUEUE WHERE TRACERS PUSH THEM! (BATCHES THEM FOR EFFICIENT PROCESSING)
 func (cw *ContainerWatcher) processQueueBatch() {
 	batchSize := cw.cfg.EventBatchSize
 	processedCount := 0
@@ -464,7 +469,7 @@ func (cw *ContainerWatcher) enrichAndProcess(entry EventEntry) {
 	enrichedEvent := cw.eventEnricher.EnrichEvents(entry)
 
 	select {
-	case cw.workerChan <- enrichedEvent:
+	case cw.workerChan <- enrichedEvent: // Send events to Golang channel (read just about in the workerPoolLoop() function)
 	default:
 		if cw.cfg.BlockEvents {
 			logger.L().Warning("ContainerWatcher - Worker channel full, blocking until space available",
